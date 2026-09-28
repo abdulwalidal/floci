@@ -597,7 +597,7 @@ public class RdsService implements Resettable, ResourceProvider {
                 dbName, dbInstanceClass, allocatedStorage, iamEnabled, paramGroupName,
                 dbSubnetGroupName, dbClusterIdentifier, availabilityZone, multiAz,
                 manageMasterUserPassword, masterUserSecretKmsKeyId, tags, vpcSecurityGroupIds,
-                optionGroupName, region, autoMinorVersionUpgrade, settings, publiclyAccessible, null);
+                optionGroupName, region, autoMinorVersionUpgrade, settings, publiclyAccessible, null, null);
     }
 
     public DbInstance createDbInstance(String id, String engineParam, String engineVersion,
@@ -616,6 +616,31 @@ public class RdsService implements Resettable, ResourceProvider {
                                        DbInstanceSettings settings,
                                        Boolean publiclyAccessible,
                                        Integer requestedPort) {
+        return createDbInstance(id, engineParam, engineVersion, masterUsername, masterPassword,
+                dbName, dbInstanceClass, allocatedStorage, iamEnabled, paramGroupName,
+                dbSubnetGroupName, dbClusterIdentifier, availabilityZone, multiAz,
+                manageMasterUserPassword, masterUserSecretKmsKeyId, tags, vpcSecurityGroupIds,
+                optionGroupName, region, autoMinorVersionUpgrade, settings, publiclyAccessible,
+                requestedPort, null);
+    }
+
+    public DbInstance createDbInstance(String id, String engineParam, String engineVersion,
+                                       String masterUsername, String masterPassword,
+                                       String dbName, String dbInstanceClass,
+                                       int allocatedStorage, boolean iamEnabled,
+                                       String paramGroupName, String dbSubnetGroupName,
+                                       String dbClusterIdentifier, String availabilityZone,
+                                       boolean multiAz, boolean manageMasterUserPassword,
+                                       String masterUserSecretKmsKeyId,
+                                       Map<String, String> tags,
+                                       List<String> vpcSecurityGroupIds,
+                                       String optionGroupName,
+                                       String region,
+                                       boolean autoMinorVersionUpgrade,
+                                       DbInstanceSettings settings,
+                                       Boolean publiclyAccessible,
+                                       Integer requestedPort,
+                                       Boolean deletionProtection) {
         validateInstanceSettings(settings);
         String provisioningKey = "instance:" + currentAccountId() + ":"
                 + dbResourceKey(effectiveRegion(region), id);
@@ -629,7 +654,7 @@ public class RdsService implements Resettable, ResourceProvider {
                     paramGroupName, dbSubnetGroupName, dbClusterIdentifier, availabilityZone,
                     multiAz, manageMasterUserPassword, masterUserSecretKmsKeyId, tags,
                     vpcSecurityGroupIds, optionGroupName, region, autoMinorVersionUpgrade,
-                    settings, publiclyAccessible, requestedPort);
+                    settings, publiclyAccessible, requestedPort, deletionProtection);
         } finally {
             provisioningIds.remove(provisioningKey);
         }
@@ -649,7 +674,8 @@ public class RdsService implements Resettable, ResourceProvider {
                                           String region,
                                           boolean autoMinorVersionUpgrade,
                                           DbInstanceSettings settings,
-                                          Boolean publiclyAccessible, Integer requestedPort) {
+                                          Boolean publiclyAccessible, Integer requestedPort,
+                                          Boolean deletionProtection) {
         String effectiveRegion = effectiveRegion(region);
         String dbiResourceId = "db-" + java.util.UUID.randomUUID().toString()
                 .replace("-", "").substring(0, 24).toUpperCase();
@@ -784,6 +810,7 @@ public class RdsService implements Resettable, ResourceProvider {
         instance.setPubliclyAccessible(publiclyAccessible != null
                 ? publiclyAccessible
                 : defaultPubliclyAccessible(engineParam, dbSubnetGroupName));
+        instance.setDeletionProtection(Boolean.TRUE.equals(deletionProtection));
 
         instance.setDbiResourceId(dbiResourceId);
         instance.setDbInstanceArn(dbInstanceArn);
@@ -2497,6 +2524,17 @@ public class RdsService implements Resettable, ResourceProvider {
             String optionGroupName, String region, Boolean autoMinorVersionUpgrade,
             DbInstanceSettings settings, Boolean publiclyAccessible,
             DbInstanceScalingChanges scaling) {
+        return modifyDbInstance(id, newPassword, iamEnabled, dbSubnetGroupName,
+                vpcSecurityGroupIds, optionGroupName, region, autoMinorVersionUpgrade,
+                settings, publiclyAccessible, scaling, null);
+    }
+
+    public synchronized DbInstance modifyDbInstance(
+            String id, String newPassword, Boolean iamEnabled,
+            String dbSubnetGroupName, List<String> vpcSecurityGroupIds,
+            String optionGroupName, String region, Boolean autoMinorVersionUpgrade,
+            DbInstanceSettings settings, Boolean publiclyAccessible,
+            DbInstanceScalingChanges scaling, Boolean deletionProtection) {
         validateInstanceSettings(settings);
         String effectiveRegion = effectiveRegion(region);
         DbInstance instance = getDbInstance(id, effectiveRegion);
@@ -2553,6 +2591,9 @@ public class RdsService implements Resettable, ResourceProvider {
         resolvedScaling.applyTo(instance);
         if (publiclyAccessible != null) {
             instance.setPubliclyAccessible(publiclyAccessible);
+        }
+        if (deletionProtection != null) {
+            instance.setDeletionProtection(deletionProtection);
         }
         putInstanceForScope(currentAccountId(), effectiveRegion, id, instance);
 
@@ -3299,6 +3340,11 @@ public class RdsService implements Resettable, ResourceProvider {
                         findInstanceForScope(currentAccountId(), effectiveRegion, id))
                 .orElseThrow(() ->
                 new AwsException("DBInstanceNotFound", "DB instance " + id + " not found.", 404));
+
+        if (instance.isDeletionProtection()) {
+            throw new AwsException("InvalidParameterCombination",
+                    "Cannot delete protected DB Instance, please disable deletion protection and try again.", 400);
+        }
 
         if (isRegisteredProxyTarget(
                 "RDS_INSTANCE", id, regionFromArn(instance.getDbInstanceArn()))) {
